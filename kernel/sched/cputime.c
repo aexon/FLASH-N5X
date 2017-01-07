@@ -276,21 +276,21 @@ static __always_inline bool steal_account_process_tick(void)
 #ifdef CONFIG_PARAVIRT
 	if (static_key_false(&paravirt_steal_enabled)) {
 		u64 steal;
-		cputime_t steal_ct;
+		unsigned long steal_jiffies;
 
 		steal = paravirt_steal_clock(smp_processor_id());
 		steal -= this_rq()->prev_steal_time;
 
 		/*
-		 * cputime_t may be less precise than nsecs (eg: if it's
-		 * based on jiffies). Lets cast the result to cputime
+		 * steal is in nsecs but our caller is expecting steal
+		 * time in jiffies. Lets cast the result to jiffies
 		 * granularity and account the rest on the next rounds.
 		 */
-		steal_ct = nsecs_to_cputime(steal);
-		this_rq()->prev_steal_time += cputime_to_nsecs(steal_ct);
+		steal_jiffies = nsecs_to_jiffies(steal);
+		this_rq()->prev_steal_time += jiffies_to_nsecs(steal_jiffies);
 
-		account_steal_time(steal_ct);
-		return steal_ct;
+		account_steal_time(jiffies_to_cputime(steal_jiffies));
+		return steal_jiffies;
 	}
 #endif
 	return false;
@@ -395,11 +395,8 @@ static inline void irqtime_account_process_tick(struct task_struct *p, int user_
 #ifdef CONFIG_VIRT_CPU_ACCOUNTING
 
 #ifndef __ARCH_HAS_VTIME_TASK_SWITCH
-void vtime_task_switch(struct task_struct *prev)
+void vtime_common_task_switch(struct task_struct *prev)
 {
-	if (!vtime_accounting_enabled())
-		return;
-
 	if (is_idle_task(prev))
 		vtime_account_idle(prev);
 	else
@@ -421,11 +418,8 @@ void vtime_task_switch(struct task_struct *prev)
  * vtime_account().
  */
 #ifndef __ARCH_HAS_VTIME_ACCOUNT
-void vtime_account_irq_enter(struct task_struct *tsk)
+void vtime_common_account_irq_enter(struct task_struct *tsk)
 {
-	if (!vtime_accounting_enabled())
-		return;
-
 	if (!in_interrupt()) {
 		/*
 		 * If we interrupted user, context_tracking_in_user()
@@ -445,7 +439,7 @@ void vtime_account_irq_enter(struct task_struct *tsk)
 	}
 	vtime_account_system(tsk);
 }
-EXPORT_SYMBOL_GPL(vtime_account_irq_enter);
+EXPORT_SYMBOL_GPL(vtime_common_account_irq_enter);
 #endif /* __ARCH_HAS_VTIME_ACCOUNT */
 #endif /* CONFIG_VIRT_CPU_ACCOUNTING */
 
@@ -693,11 +687,8 @@ void vtime_account_system(struct task_struct *tsk)
 	write_sequnlock(&tsk->vtime_seqlock);
 }
 
-void vtime_account_irq_exit(struct task_struct *tsk)
+void vtime_gen_account_irq_exit(struct task_struct *tsk)
 {
-	if (!vtime_accounting_enabled())
-		return;
-
 	write_seqlock(&tsk->vtime_seqlock);
 	if (context_tracking_in_user())
 		tsk->vtime_snap_whence = VTIME_USER;
@@ -733,11 +724,19 @@ void vtime_user_enter(struct task_struct *tsk)
 
 void vtime_guest_enter(struct task_struct *tsk)
 {
+	/*
+	 * The flags must be updated under the lock with
+	 * the vtime_snap flush and update.
+	 * That enforces a right ordering and update sequence
+	 * synchronization against the reader (task_gtime())
+	 * that can thus safely catch up with a tickless delta.
+	 */
 	write_seqlock(&tsk->vtime_seqlock);
 	__vtime_account_system(tsk);
 	current->flags |= PF_VCPU;
 	write_sequnlock(&tsk->vtime_seqlock);
 }
+EXPORT_SYMBOL_GPL(vtime_guest_enter);
 
 void vtime_guest_exit(struct task_struct *tsk)
 {
@@ -746,17 +745,13 @@ void vtime_guest_exit(struct task_struct *tsk)
 	current->flags &= ~PF_VCPU;
 	write_sequnlock(&tsk->vtime_seqlock);
 }
+EXPORT_SYMBOL_GPL(vtime_guest_exit);
 
 void vtime_account_idle(struct task_struct *tsk)
 {
 	cputime_t delta_cpu = get_vtime_delta(tsk);
 
 	account_idle_time(delta_cpu);
-}
-
-bool vtime_accounting_enabled(void)
-{
-	return context_tracking_active();
 }
 
 void arch_vtime_task_switch(struct task_struct *prev)

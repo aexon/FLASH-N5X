@@ -357,7 +357,8 @@ static struct afe_param_id_clip_bank_sel clip_bank_sel = {
 #define TOMTOM_MCLK_CLK_9P6MHZ 9600000
 
 #define TOMTOM_FORMATS_S16_S24_LE (SNDRV_PCM_FMTBIT_S16_LE | \
-			SNDRV_PCM_FMTBIT_S24_LE)
+			SNDRV_PCM_FMTBIT_S24_LE | \
+			SNDRV_PCM_FMTBIT_S24_3LE)
 
 #define TOMTOM_FORMATS (SNDRV_PCM_FMTBIT_S16_LE)
 
@@ -528,6 +529,7 @@ struct tomtom_priv {
 	s32 dmic_5_6_clk_cnt;
 	s32 ldo_h_users;
 	s32 micb_2_users;
+	s32 micb_3_users;
 
 	u32 anc_slot;
 	bool anc_func;
@@ -3538,6 +3540,11 @@ static int tomtom_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 			}
 			pr_debug("%s: micb_2_users %d\n", __func__,
 				 tomtom->micb_2_users);
+		} else if (micb_ctl_reg == TOMTOM_A_MICB_3_CTL) {
+			if (++tomtom->micb_3_users == 1)
+				snd_soc_update_bits(codec, micb_ctl_reg,
+						    1 << w->shift,
+						    1 << w->shift);
 		} else {
 			snd_soc_update_bits(codec, micb_ctl_reg, 1 << w->shift,
 					    1 << w->shift);
@@ -3567,6 +3574,15 @@ static int tomtom_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 			WARN(tomtom->micb_2_users < 0,
 			     "Unexpected micbias users %d\n",
 			     tomtom->micb_2_users);
+		} else if (micb_ctl_reg == TOMTOM_A_MICB_3_CTL) {
+			if (--tomtom->micb_3_users == 0)
+				snd_soc_update_bits(codec, micb_ctl_reg,
+						    1 << w->shift, 0);
+			pr_debug("%s: micb_3_users %d\n", __func__,
+				 tomtom->micb_3_users);
+			WARN(tomtom->micb_3_users < 0,
+			     "Unexpected micbias-3 users %d\n",
+			     tomtom->micb_3_users);
 		} else {
 			snd_soc_update_bits(codec, micb_ctl_reg, 1 << w->shift,
 					    0);
@@ -5858,6 +5874,7 @@ static void tomtom_set_tx_sb_port_format(struct snd_pcm_hw_params *params,
 		tomtom_p->dai[dai->id].bit_width = 16;
 		break;
 	case SNDRV_PCM_FORMAT_S24_LE:
+	case SNDRV_PCM_FORMAT_S24_3LE:
 		bit_sel = 0x0;
 		tomtom_p->dai[dai->id].bit_width = 24;
 		break;
@@ -5972,6 +5989,7 @@ static int tomtom_hw_params(struct snd_pcm_substream *substream,
 			tomtom->dai[dai->id].bit_width = 16;
 			break;
 		case SNDRV_PCM_FORMAT_S24_LE:
+		case SNDRV_PCM_FORMAT_S24_3LE:
 			tomtom->dai[dai->id].bit_width = 24;
 			i2s_bit_mode = 0x00;
 			break;
@@ -6151,7 +6169,7 @@ static struct snd_soc_dai_driver tomtom_dai[] = {
 		.capture = {
 			.stream_name = "AIF1 Capture",
 			.rates = WCD9330_RATES,
-			.formats = TOMTOM_FORMATS,
+			.formats = TOMTOM_FORMATS_S16_S24_LE,
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
@@ -6179,7 +6197,7 @@ static struct snd_soc_dai_driver tomtom_dai[] = {
 		.capture = {
 			.stream_name = "AIF2 Capture",
 			.rates = WCD9330_RATES,
-			.formats = TOMTOM_FORMATS,
+			.formats = TOMTOM_FORMATS_S16_S24_LE,
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
@@ -6207,7 +6225,7 @@ static struct snd_soc_dai_driver tomtom_dai[] = {
 		.capture = {
 			.stream_name = "AIF3 Capture",
 			.rates = WCD9330_RATES,
-			.formats = TOMTOM_FORMATS,
+			.formats = TOMTOM_FORMATS_S16_S24_LE,
 			.rate_max = 48000,
 			.rate_min = 8000,
 			.channels_min = 1,
@@ -6252,7 +6270,7 @@ static struct snd_soc_dai_driver tomtom_i2s_dai[] = {
 		.playback = {
 			.stream_name = "AIF1 Playback",
 			.rates = WCD9330_RATES,
-			.formats = TOMTOM_FORMATS,
+			.formats = TOMTOM_FORMATS_S16_S24_LE,
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
@@ -6266,7 +6284,7 @@ static struct snd_soc_dai_driver tomtom_i2s_dai[] = {
 		.capture = {
 			.stream_name = "AIF1 Capture",
 			.rates = WCD9330_RATES,
-			.formats = TOMTOM_FORMATS,
+			.formats = TOMTOM_FORMATS_S16_S24_LE,
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
@@ -6280,7 +6298,7 @@ static struct snd_soc_dai_driver tomtom_i2s_dai[] = {
 		.playback = {
 			.stream_name = "AIF2 Playback",
 			.rates = WCD9330_RATES,
-			.formats = TOMTOM_FORMATS,
+			.formats = TOMTOM_FORMATS_S16_S24_LE,
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
@@ -6294,7 +6312,7 @@ static struct snd_soc_dai_driver tomtom_i2s_dai[] = {
 		.capture = {
 			.stream_name = "AIF2 Capture",
 			.rates = WCD9330_RATES,
-			.formats = TOMTOM_FORMATS,
+			.formats = TOMTOM_FORMATS_S16_S24_LE,
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
@@ -8979,6 +8997,7 @@ static int tomtom_codec_probe(struct snd_soc_codec *codec)
 	tomtom->aux_r_gain = 0x1F;
 	tomtom->ldo_h_users = 0;
 	tomtom->micb_2_users = 0;
+	tomtom->micb_3_users = 0;
 	tomtom_update_reg_defaults(codec);
 	pr_debug("%s: MCLK Rate = %x\n", __func__, wcd9xxx->mclk_rate);
 	if (wcd9xxx->mclk_rate == TOMTOM_MCLK_CLK_12P288MHZ) {
