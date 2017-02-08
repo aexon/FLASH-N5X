@@ -25,6 +25,7 @@
 #include <linux/tick.h>
 #include <linux/suspend.h>
 #include <linux/pm_qos.h>
+#include <linux/quickwakeup.h>
 #include <linux/of_platform.h>
 #include <linux/smp.h>
 #include <linux/remote_spinlock.h>
@@ -272,21 +273,18 @@ int set_system_mode(struct low_power_ops *ops, int mode, bool notify_rpm)
 }
 
 static int cpu_power_select(struct cpuidle_device *dev,
-		struct lpm_cpu *cpu, int *index)
+		struct lpm_cpu *cpu)
 {
 	int best_level = -1;
-	uint32_t best_level_pwr = ~0U;
 	uint32_t latency_us = pm_qos_request_for_cpu(PM_QOS_CPU_DMA_LATENCY,
 							dev->cpu);
 	uint32_t sleep_us =
 		(uint32_t)(ktime_to_us(tick_nohz_get_sleep_length()));
 	uint32_t modified_time_us = 0;
 	uint32_t next_event_us = 0;
-	uint32_t pwr;
 	int i;
 	uint32_t lvl_latency_us = 0;
-	uint32_t lvl_overhead_us = 0;
-	uint32_t lvl_overhead_energy = 0;
+	uint32_t *residency = get_per_cpu_max_residency(dev->cpu);
 
 	if (!cpu)
 		return -EINVAL;
@@ -310,52 +308,32 @@ static int cpu_power_select(struct cpuidle_device *dev,
 
 		lvl_latency_us = pwr_params->latency_us;
 
-		lvl_overhead_us = pwr_params->time_overhead_us;
-
-		lvl_overhead_energy = pwr_params->energy_overhead;
-
 		if (i > 0 && suspend_in_progress)
 			continue;
 
 		if (latency_us < lvl_latency_us)
-			continue;
+			break;
 
 		if (next_event_us) {
 			if (next_event_us < lvl_latency_us)
-				continue;
+				break;
 
 			if (((next_event_us - lvl_latency_us) < sleep_us) ||
 					(next_event_us < sleep_us))
 				next_wakeup_us = next_event_us - lvl_latency_us;
 		}
 
-		if (next_wakeup_us <= pwr_params->time_overhead_us)
-			continue;
+		best_level = i;
 
-		/*
-		 * If wakeup time greater than overhead by a factor of 1000
-		 * assume that core steady state power dominates the power
-		 * equation
-		 */
-		if ((next_wakeup_us >> 10) > lvl_overhead_us) {
-			pwr = pwr_params->ss_power;
-		} else {
-			pwr = pwr_params->ss_power;
-			pwr -= (lvl_overhead_us * pwr_params->ss_power) /
-						next_wakeup_us;
-			pwr += pwr_params->energy_overhead / next_wakeup_us;
-		}
-
-		if (best_level_pwr >= pwr) {
-			best_level = i;
-			best_level_pwr = pwr;
-			if (next_event_us && next_event_us < sleep_us &&
+		if (next_event_us && next_event_us < sleep_us &&
 				(mode != MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT))
-				modified_time_us
-					= next_event_us - lvl_latency_us;
-			else
-				modified_time_us = 0;
-		}
+			modified_time_us
+				= next_event_us - lvl_latency_us;
+		else
+			modified_time_us = 0;
+
+		if (next_wakeup_us <= residency[i])
+			break;
 	}
 
 	if (modified_time_us)
@@ -412,8 +390,6 @@ static int cluster_select(struct lpm_cluster *cluster, bool from_idle)
 {
 	int best_level = -1;
 	int i;
-	uint32_t best_level_pwr = ~0U;
-	uint32_t pwr;
 	struct cpumask mask;
 	uint32_t latency_us = ~0U;
 	uint32_t sleep_us;
@@ -454,10 +430,10 @@ static int cluster_select(struct lpm_cluster *cluster, bool from_idle)
 			continue;
 
 		if (from_idle && latency_us < pwr_params->latency_us)
-			continue;
+			break;
 
 		if (sleep_us < pwr_params->time_overhead_us)
-			continue;
+			break;
 
 		if (suspend_in_progress && from_idle && level->notify_rpm)
 			continue;
@@ -465,19 +441,10 @@ static int cluster_select(struct lpm_cluster *cluster, bool from_idle)
 		if (level->notify_rpm && msm_rpm_waiting_for_ack())
 			continue;
 
-		if ((sleep_us >> 10) > pwr_params->time_overhead_us) {
-			pwr = pwr_params->ss_power;
-		} else {
-			pwr = pwr_params->ss_power;
-			pwr -= (pwr_params->time_overhead_us *
-					pwr_params->ss_power) / sleep_us;
-			pwr += pwr_params->energy_overhead / sleep_us;
-		}
+		best_level = i;
 
-		if (best_level_pwr >= pwr) {
-			best_level = i;
-			best_level_pwr = pwr;
-		}
+		if (sleep_us <= pwr_params->max_residency)
+			break;
 	}
 
 	return best_level;
@@ -712,15 +679,16 @@ static inline void cpu_unprepare(struct lpm_cluster *cluster, int cpu_index,
 		cpu_pm_exit();
 }
 
-static int lpm_cpuidle_enter(struct cpuidle_device *dev,
-		struct cpuidle_driver *drv, int index)
+static int lpm_cpuidle_select(struct cpuidle_driver *drv,
+		struct cpuidle_device *dev)
 {
 	struct lpm_cluster *cluster = per_cpu(cpu_cluster, dev->cpu);
-	int64_t time = ktime_to_ns(ktime_get());
-	bool success = true;
-	int idx = cpu_power_select(dev, cluster->cpu, &index);
-	const struct cpumask *cpumask = get_cpu_mask(dev->cpu);
-	struct power_params *pwr_params;
+	int idx;
+
+	if (!cluster)
+		return 0;
+
+	idx = cpu_power_select(dev, cluster->cpu);
 
 	if (idx < 0) {
 		local_irq_enable();
@@ -728,6 +696,17 @@ static int lpm_cpuidle_enter(struct cpuidle_device *dev,
 	}
 
 	trace_cpu_idle_rcuidle(idx, dev->cpu);
+	return idx;
+}
+
+static int lpm_cpuidle_enter(struct cpuidle_device *dev,
+		struct cpuidle_driver *drv, int idx)
+{
+	struct lpm_cluster *cluster = per_cpu(cpu_cluster, dev->cpu);
+	bool success = true;
+	const struct cpumask *cpumask = get_cpu_mask(dev->cpu);
+	int64_t start_time = ktime_to_ns(ktime_get()), end_time;
+	struct power_params *pwr_params;
 
 	if (need_resched()) {
 		dev->last_residency = 0;
@@ -738,31 +717,39 @@ static int lpm_cpuidle_enter(struct cpuidle_device *dev,
 	sched_set_cpu_cstate(smp_processor_id(), idx + 1,
 		pwr_params->energy_overhead, pwr_params->latency_us);
 
-	trace_cpu_idle_enter(idx);
 	cpu_prepare(cluster, idx, true);
 
 	cluster_prepare(cluster, cpumask, idx, true);
+
+	trace_cpu_idle_enter(idx);
 	lpm_stats_cpu_enter(idx);
-	success = msm_cpu_pm_enter_sleep(cluster->cpu->levels[idx].mode, true);
+
+	if (idx > 0)
+		update_debug_pc_event(CPU_ENTER, idx, 0xdeaffeed, 0xdeaffeed,
+					true);
+	success = msm_cpu_pm_enter_sleep(cluster->cpu->levels[idx].mode,
+						true);
+	if (idx > 0)
+		update_debug_pc_event(CPU_EXIT, idx, success, 0xdeaffeed,
+					true);
+
 	lpm_stats_cpu_exit(idx, success);
 	cluster_unprepare(cluster, cpumask, idx, true);
 	cpu_unprepare(cluster, idx, true);
 
 	sched_set_cpu_cstate(smp_processor_id(), 0, 0, 0);
-
-	time = ktime_to_ns(ktime_get()) - time;
-	do_div(time, 1000);
-	dev->last_residency = (int)time;
 	trace_cpu_idle_exit(idx, success);
 
 exit:
 	trace_cpu_idle_rcuidle(PWR_EVENT_EXIT, dev->cpu);
+	end_time = ktime_to_ns(ktime_get()) - start_time;
+	dev->last_residency = do_div(end_time, 1000);
 	local_irq_enable();
+
 	return idx;
 }
 
 #ifdef CONFIG_CPU_IDLE_MULTIPLE_DRIVERS
-static DEFINE_PER_CPU(struct cpuidle_device, cpuidle_dev);
 static int cpuidle_register_cpu(struct cpuidle_driver *drv,
 		struct cpumask *mask)
 {
@@ -773,12 +760,14 @@ static int cpuidle_register_cpu(struct cpuidle_driver *drv,
 	if (!mask || !drv)
 		return -EINVAL;
 
+	drv->cpumask = mask;
+	ret = cpuidle_register_driver(drv);
+	if (ret) {
+		pr_err("Failed to register cpuidle driver %d\n", ret);
+		goto failed_driver_register;
+	}
+
 	for_each_cpu(cpu, mask) {
-		ret = cpuidle_register_cpu_driver(drv, cpu);
-		if (ret) {
-			pr_err("Failed to register cpuidle driver %d\n", ret);
-			goto failed_driver_register;
-		}
 		device = &per_cpu(cpuidle_dev, cpu);
 		device->cpu = cpu;
 
@@ -792,7 +781,7 @@ static int cpuidle_register_cpu(struct cpuidle_driver *drv,
 	return ret;
 failed_driver_register:
 	for_each_cpu(cpu, mask)
-		cpuidle_unregister_cpu_driver(drv, cpu);
+		cpuidle_unregister_driver(drv);
 	return ret;
 }
 #else
@@ -802,6 +791,13 @@ static int cpuidle_register_cpu(struct cpuidle_driver *drv,
 	return cpuidle_register(drv, NULL);
 }
 #endif
+
+static struct cpuidle_governor lpm_governor = {
+	.name =		"qcom",
+	.rating =	30,
+	.select =	lpm_cpuidle_select,
+	.owner =	THIS_MODULE,
+};
 
 static int cluster_cpuidle_register(struct lpm_cluster *cl)
 {
@@ -864,9 +860,18 @@ static int cluster_cpuidle_register(struct lpm_cluster *cl)
 		kfree(cl->drv);
 		return -ENOMEM;
 	}
-
 	return 0;
 }
+
+/**
+ * init_lpm - initializes the governor
+ */
+static int __init init_lpm(void)
+{
+	return cpuidle_register_governor(&lpm_governor);
+}
+
+postcore_initcall(init_lpm);
 
 static void register_cpu_lpm_stats(struct lpm_cpu *cpu,
 		struct lpm_cluster *parent)
@@ -956,7 +961,13 @@ static int lpm_suspend_enter(suspend_state_t state)
 	}
 	cpu_prepare(cluster, idx, false);
 	cluster_prepare(cluster, cpumask, idx, false);
+	if (idx > 0)
+		update_debug_pc_event(CPU_ENTER, idx, 0xdeaffeed,
+					0xdeaffeed, false);
 	msm_cpu_pm_enter_sleep(cluster->cpu->levels[idx].mode, false);
+	if (idx > 0)
+		update_debug_pc_event(CPU_EXIT, idx, true, 0xdeaffeed,
+					false);
 	cluster_unprepare(cluster, cpumask, idx, false);
 	cpu_unprepare(cluster, idx, false);
 	return 0;
@@ -967,6 +978,7 @@ static const struct platform_suspend_ops lpm_suspend_ops = {
 	.valid = suspend_valid_only_mem,
 	.prepare_late = lpm_suspend_prepare,
 	.end = lpm_suspend_end,
+	.suspend_again = quickwakeup_suspend_again,
 };
 
 static int lpm_probe(struct platform_device *pdev)
@@ -975,10 +987,12 @@ static int lpm_probe(struct platform_device *pdev)
 	int size;
 	struct kobject *module_kobj = NULL;
 
+	get_online_cpus();
 	lpm_root_node = lpm_of_parse_cluster(pdev);
 
 	if (IS_ERR_OR_NULL(lpm_root_node)) {
 		pr_err("%s(): Failed to probe low power modes\n", __func__);
+		put_online_cpus();
 		return PTR_ERR(lpm_root_node);
 	}
 
@@ -991,7 +1005,6 @@ static int lpm_probe(struct platform_device *pdev)
 	 * core.  BUG in existing code but no known issues possibly because of
 	 * how late lpm_levels gets initialized.
 	 */
-	register_hotcpu_notifier(&lpm_cpu_nblk);
 	get_cpu();
 	on_each_cpu(setup_broadcast_timer, (void *)true, 1);
 	put_cpu();
@@ -1002,6 +1015,7 @@ static int lpm_probe(struct platform_device *pdev)
 	if (ret) {
 		pr_err("%s: Failed initializing scm_handoff_lock (%d)\n",
 			__func__, ret);
+		put_online_cpus();
 		return ret;
 	}
 
@@ -1011,12 +1025,13 @@ static int lpm_probe(struct platform_device *pdev)
 	register_cluster_lpm_stats(lpm_root_node, NULL);
 
 	ret = cluster_cpuidle_register(lpm_root_node);
+	put_online_cpus();
 	if (ret) {
 		pr_err("%s()Failed to register with cpuidle framework\n",
 				__func__);
 		goto failed;
 	}
-
+	register_hotcpu_notifier(&lpm_cpu_nblk);
 	module_kobj = kset_find_obj(module_kset, KBUILD_MODNAME);
 	if (!module_kobj) {
 		pr_err("%s: cannot find kobject for module %s\n",
@@ -1170,4 +1185,5 @@ void lpm_cpu_hotplug_enter(unsigned int cpu)
 
 	msm_cpu_pm_enter_sleep(mode, false);
 }
+
 

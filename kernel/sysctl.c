@@ -352,6 +352,20 @@ static struct ctl_table kern_table[] = {
 		.proc_handler   = sched_window_update_handler,
 	},
 	{
+		.procname       = "sched_enable_colocation",
+		.data           = &sysctl_sched_enable_colocation,
+		.maxlen         = sizeof(unsigned int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec,
+	},
+	{
+		.procname       = "sched_enable_thread_grouping",
+		.data           = &sysctl_sched_enable_thread_grouping,
+		.maxlen         = sizeof(unsigned int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec,
+	},
+	{
 		.procname       = "sched_cpu_high_irqload",
 		.data           = &sysctl_sched_cpu_high_irqload,
 		.maxlen         = sizeof(unsigned int),
@@ -423,6 +437,27 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= sched_hmp_proc_update_handler,
 	},
 	{
+		.procname	= "sched_grp_upmigrate",
+		.data		= &sysctl_sched_grp_upmigrate_pct,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= sched_hmp_proc_update_handler,
+	},
+	{
+		.procname	= "sched_grp_downmigrate",
+		.data		= &sysctl_sched_grp_downmigrate_pct,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= sched_hmp_proc_update_handler,
+	},
+	{
+		.procname	= "sched_grp_task_active_windows",
+		.data		= &sysctl_sched_grp_task_active_windows,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= sched_hmp_proc_update_handler,
+	},
+	{
 		.procname	= "sched_init_task_load",
 		.data		= &sysctl_sched_init_task_load_pct,
 		.maxlen		= sizeof(unsigned int),
@@ -448,7 +483,7 @@ static struct ctl_table kern_table[] = {
 		.data		= &sysctl_sched_enable_power_aware,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
-		.proc_handler	= sched_enable_power_aware_handler,
+		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= &zero,
 		.extra2		= &one,
 	},
@@ -2187,7 +2222,7 @@ static int __do_proc_dointvec(void *tbl_data, struct ctl_table *table,
 	int *i, vleft, first = 1, err = 0;
 	unsigned long page = 0;
 	size_t left;
-	char *kbuf;
+	char *kbuf = NULL;
 	
 	if (!tbl_data || !table->maxlen || !*lenp || (*ppos && !write)) {
 		*lenp = 0;
@@ -2437,7 +2472,7 @@ static int __do_proc_doulongvec_minmax(void *data, struct ctl_table *table, int 
 	int vleft, first = 1, err = 0;
 	unsigned long page = 0;
 	size_t left;
-	char *kbuf;
+	char *kbuf = NULL;
 
 	if (!data || !table->maxlen || !*lenp || (*ppos && !write)) {
 		*lenp = 0;

@@ -205,7 +205,7 @@ static ssize_t show_available_freqs(struct cpufreq_policy *policy, char *buf)
 
 	if (!per_cpu(cpufreq_show_table, cpu))
 		return -ENODEV;
-
+	
 	table = per_cpu(cpufreq_show_table, cpu);
 
 	for (i = 0; (table[i].frequency != CPUFREQ_TABLE_END); i++) {

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -178,7 +178,11 @@ int msm_slim_sps_mem_alloc(
 void
 msm_slim_sps_mem_free(struct msm_slim_ctrl *dev, struct sps_mem_buffer *mem)
 {
-	dma_free_coherent(dev->dev, mem->size, mem->base, mem->phys_base);
+	if (mem->base && mem->phys_base)
+		dma_free_coherent(dev->dev, mem->size, mem->base,
+							mem->phys_base);
+	 else
+		dev_err(dev->dev, "cant dma free. they are NULL\n");
 	mem->size = 0;
 	mem->base = NULL;
 	mem->phys_base = 0;
@@ -304,13 +308,13 @@ void msm_dealloc_port(struct slim_controller *ctrl, u8 pn)
 	if (pn >= dev->port_nums)
 		return;
 	endpoint = &dev->pipes[pn];
-	if (dev->pipes[pn].connected)
-		msm_slim_disconn_pipe_port(dev, pn);
-	if (endpoint->sps) {
+	if (dev->pipes[pn].connected) {
 		struct sps_connect *config = &endpoint->config;
-		msm_slim_free_endpoint(endpoint);
+		msm_slim_disconn_pipe_port(dev, pn);
 		msm_slim_sps_mem_free(dev, &config->desc);
 	}
+	if (endpoint->sps)
+		msm_slim_free_endpoint(endpoint);
 }
 
 enum slim_port_err msm_slim_port_xfer_status(struct slim_controller *ctr,
@@ -780,9 +784,7 @@ static int msm_slim_init_rx_msgq(struct msm_slim_ctrl *dev, u32 pipe_reg)
 	struct sps_connect *config = &endpoint->config;
 	struct sps_mem_buffer *descr = &config->desc;
 	struct sps_mem_buffer *mem = &endpoint->buf;
-	struct completion *notify = &dev->rx_msgq_notify;
 
-	init_completion(notify);
 	if (dev->use_rx_msgqs == MSM_MSGQ_DISABLED)
 		return 0;
 
@@ -1027,6 +1029,22 @@ void msm_slim_disconnect_endp(struct msm_slim_ctrl *dev,
 	}
 }
 
+static int msm_slim_discard_rx_data(struct msm_slim_ctrl *dev,
+					struct msm_slim_endp *endpoint)
+{
+	struct sps_iovec sio;
+	int desc_num = 0, ret = 0;
+
+	ret = sps_get_unused_desc_num(endpoint->sps, &desc_num);
+	if (ret) {
+		dev_err(dev->dev, "sps_get_iovec() failed 0x%x\n", ret);
+		return ret;
+	}
+	while (desc_num--)
+		sps_get_iovec(endpoint->sps, &sio);
+	return ret;
+}
+
 static void msm_slim_remove_ep(struct msm_slim_ctrl *dev,
 					struct msm_slim_endp *endpoint,
 					enum msm_slim_msgq *msgq_flag)
@@ -1034,15 +1052,37 @@ static void msm_slim_remove_ep(struct msm_slim_ctrl *dev,
 	struct sps_connect *config = &endpoint->config;
 	struct sps_mem_buffer *descr = &config->desc;
 	struct sps_mem_buffer *mem = &endpoint->buf;
-	struct sps_register_event sps_event;
-	memset(&sps_event, 0x00, sizeof(sps_event));
+
 	msm_slim_sps_mem_free(dev, mem);
-	sps_register_event(endpoint->sps, &sps_event);
-	if (*msgq_flag == MSM_MSGQ_ENABLED) {
-		msm_slim_disconnect_endp(dev, endpoint, msgq_flag);
-		msm_slim_free_endpoint(endpoint);
-	}
 	msm_slim_sps_mem_free(dev, descr);
+	msm_slim_free_endpoint(endpoint);
+}
+
+void msm_slim_deinit_ep(struct msm_slim_ctrl *dev,
+				struct msm_slim_endp *endpoint,
+				enum msm_slim_msgq *msgq_flag)
+{
+	int ret = 0;
+	struct sps_connect *config = &endpoint->config;
+
+	if (*msgq_flag == MSM_MSGQ_ENABLED) {
+		if (config->mode == SPS_MODE_SRC) {
+			ret = msm_slim_discard_rx_data(dev, endpoint);
+			if (ret)
+				SLIM_WARN(dev, "discarding Rx data failed\n");
+		}
+		msm_slim_disconnect_endp(dev, endpoint, msgq_flag);
+		msm_slim_remove_ep(dev, endpoint, msgq_flag);
+	}
+}
+
+static void msm_slim_sps_unreg_event(struct sps_pipe *sps)
+{
+	struct sps_register_event sps_event;
+
+	memset(&sps_event, 0x00, sizeof(sps_event));
+	/* Disable interrupt and signal notification for Rx/Tx pipe */
+	sps_register_event(sps, &sps_event);
 }
 
 void msm_slim_sps_exit(struct msm_slim_ctrl *dev, bool dereg)
@@ -1050,9 +1090,10 @@ void msm_slim_sps_exit(struct msm_slim_ctrl *dev, bool dereg)
 	int i;
 
 	if (dev->use_rx_msgqs >= MSM_MSGQ_ENABLED)
-		msm_slim_remove_ep(dev, &dev->rx_msgq, &dev->use_rx_msgqs);
+		msm_slim_sps_unreg_event(dev->rx_msgq.sps);
 	if (dev->use_tx_msgqs >= MSM_MSGQ_ENABLED)
-		msm_slim_remove_ep(dev, &dev->tx_msgq, &dev->use_tx_msgqs);
+		msm_slim_sps_unreg_event(dev->tx_msgq.sps);
+
 	for (i = 0; i < dev->port_nums; i++) {
 		if (dev->pipes[i].connected)
 			msm_slim_disconn_pipe_port(dev, i);
@@ -1322,7 +1363,7 @@ static int msm_slim_qmi_send_select_inst_req(struct msm_slim_ctrl *dev,
 	resp_desc.ei_array = slimbus_select_inst_resp_msg_v01_ei;
 
 	rc = qmi_send_req_wait(dev->qmi.handle, &req_desc, req, sizeof(*req),
-					&resp_desc, &resp, sizeof(resp), 5000);
+			&resp_desc, &resp, sizeof(resp), SLIM_QMI_RESP_TOUT);
 	if (rc < 0) {
 		SLIM_ERR(dev, "%s: QMI send req failed %d\n", __func__, rc);
 		return rc;
@@ -1354,7 +1395,7 @@ static int msm_slim_qmi_send_power_request(struct msm_slim_ctrl *dev,
 	resp_desc.ei_array = slimbus_power_resp_msg_v01_ei;
 
 	rc = qmi_send_req_wait(dev->qmi.handle, &req_desc, req, sizeof(*req),
-					&resp_desc, &resp, sizeof(resp), 5000);
+			&resp_desc, &resp, sizeof(resp), SLIM_QMI_RESP_TOUT);
 	if (rc < 0) {
 		SLIM_ERR(dev, "%s: QMI send req failed %d\n", __func__, rc);
 		return rc;
@@ -1404,7 +1445,7 @@ int msm_slim_qmi_init(struct msm_slim_ctrl *dev, bool apps_is_master)
 	}
 
 	/* Instance is 0 based */
-	req.instance = dev->ctrl.nr - 1;
+	req.instance = (dev->ctrl.nr >> 1);
 	req.mode_valid = 1;
 
 	/* Mode indicates the role of the ADSP */
@@ -1472,7 +1513,7 @@ int msm_slim_qmi_check_framer_request(struct msm_slim_ctrl *dev)
 	resp_desc.ei_array = slimbus_chkfrm_resp_msg_v01_ei;
 
 	rc = qmi_send_req_wait(dev->qmi.handle, &req_desc, NULL, 0,
-					&resp_desc, &resp, sizeof(resp), 5000);
+		&resp_desc, &resp, sizeof(resp), SLIM_QMI_RESP_TOUT);
 	if (rc < 0) {
 		SLIM_ERR(dev, "%s: QMI send req failed %d\n", __func__, rc);
 		return rc;

@@ -25,6 +25,8 @@
 #include <linux/module.h>
 #include <linux/kthread.h>
 
+static int touchboost = 0;
+
 static struct mutex managed_cpus_lock;
 
 /* Maximum number to clusters that this module will manage*/
@@ -139,6 +141,29 @@ static struct task_struct *notify_thread;
 
 /**************************sysfs start********************************/
 
+static int set_touchboost(const char *buf, const struct kernel_param *kp)
+{
+	int val;
+
+	if (sscanf(buf, "%d\n", &val) != 1)
+		return -EINVAL;
+
+	touchboost = val;
+
+	return 0;
+}
+
+static int get_touchboost(char *buf, const struct kernel_param *kp)
+{
+	return snprintf(buf, PAGE_SIZE, "%d", touchboost);
+}
+
+static const struct kernel_param_ops param_ops_touchboost = {
+	.set = set_touchboost,
+	.get = get_touchboost,
+};
+device_param_cb(touchboost, &param_ops_touchboost, NULL, 0644);
+
 static int set_num_clusters(const char *buf, const struct kernel_param *kp)
 {
 	unsigned int val;
@@ -171,7 +196,6 @@ device_param_cb(num_clusters, &param_ops_num_clusters, NULL, 0644);
 
 static int set_max_cpus(const char *buf, const struct kernel_param *kp)
 {
-#if 0
 	unsigned int i, ntokens = 0;
 	const char *cp = buf;
 	int val;
@@ -202,7 +226,6 @@ static int set_max_cpus(const char *buf, const struct kernel_param *kp)
 	}
 
 	schedule_delayed_work(&evaluate_hotplug_work, 0);
-#endif
 
 	return 0;
 }
@@ -263,8 +286,8 @@ static int get_managed_cpus(char *buf, const struct kernel_param *kp)
 		return cnt;
 
 	for (i = 0; i < num_clusters; i++) {
-		cnt += cpulist_scnprintf(buf + cnt, PAGE_SIZE - cnt,
-						managed_clusters[i]->cpus);
+		cnt += scnprintf(buf + cnt, PAGE_SIZE - cnt, "%*pbl",
+				cpumask_pr_args(managed_clusters[i]->cpus));
 		if ((i + 1) >= num_clusters)
 			break;
 		cnt += snprintf(buf + cnt, PAGE_SIZE - cnt, ":");
@@ -296,8 +319,8 @@ static int get_managed_online_cpus(char *buf, const struct kernel_param *kp)
 		cpumask_complement(&tmp_mask, i_cl->offlined_cpus);
 		cpumask_and(&tmp_mask, i_cl->cpus, &tmp_mask);
 
-		cnt += cpulist_scnprintf(buf + cnt, PAGE_SIZE - cnt,
-								&tmp_mask);
+		cnt += scnprintf(buf + cnt, PAGE_SIZE - cnt, "%*pbl",
+						cpumask_pr_args(&tmp_mask));
 
 		if ((i + 1) >= num_clusters)
 			break;
@@ -319,7 +342,6 @@ device_param_cb(managed_online_cpus, &param_ops_managed_online_cpus,
  */
 static int set_cpu_min_freq(const char *buf, const struct kernel_param *kp)
 {
-#if 0
 	int i, j, ntokens = 0;
 	unsigned int val, cpu;
 	const char *cp = buf;
@@ -327,6 +349,10 @@ static int set_cpu_min_freq(const char *buf, const struct kernel_param *kp)
 	struct cpufreq_policy policy;
 	cpumask_var_t limit_mask;
 	int ret;
+	const char *reset = "0:0 4:0";
+
+	if (touchboost == 0)
+		cp = reset;
 
 	while ((cp = strpbrk(cp + 1, " :")))
 		ntokens++;
@@ -335,7 +361,11 @@ static int set_cpu_min_freq(const char *buf, const struct kernel_param *kp)
 	if (!(ntokens % 2))
 		return -EINVAL;
 
-	cp = buf;
+	if (touchboost == 0)
+		cp = reset;
+	else
+		cp = buf;
+
 	cpumask_clear(limit_mask);
 	for (i = 0; i < ntokens; i += 2) {
 		if (sscanf(cp, "%u:%u", &cpu, &val) != 2)
@@ -375,7 +405,6 @@ static int set_cpu_min_freq(const char *buf, const struct kernel_param *kp)
 			cpumask_clear_cpu(j, limit_mask);
 	}
 	put_online_cpus();
-#endif
 
 	return 0;
 }
@@ -404,7 +433,6 @@ module_param_cb(cpu_min_freq, &param_ops_cpu_min_freq, NULL, 0644);
  */
 static int set_cpu_max_freq(const char *buf, const struct kernel_param *kp)
 {
-#if 0
 	int i, j, ntokens = 0;
 	unsigned int val, cpu;
 	const char *cp = buf;
@@ -412,6 +440,9 @@ static int set_cpu_max_freq(const char *buf, const struct kernel_param *kp)
 	struct cpufreq_policy policy;
 	cpumask_var_t limit_mask;
 	int ret;
+
+	if (touchboost == 0)
+		return 0;
 
 	while ((cp = strpbrk(cp + 1, " :")))
 		ntokens++;
@@ -452,7 +483,6 @@ static int set_cpu_max_freq(const char *buf, const struct kernel_param *kp)
 			cpumask_clear_cpu(j, limit_mask);
 	}
 	put_online_cpus();
-#endif
 
 	return 0;
 }
@@ -1011,7 +1041,6 @@ device_param_cb(iowait_ceiling_pct, &param_ops_iowait_ceiling_pct, NULL, 0644);
 
 static int set_workload_detect(const char *buf, const struct kernel_param *kp)
 {
-#if 0
 	unsigned int val, i;
 	struct cluster *i_cl;
 	unsigned long flags;
@@ -1053,7 +1082,6 @@ static int set_workload_detect(const char *buf, const struct kernel_param *kp)
 	}
 
 	wake_up_process(notify_thread);
-#endif
 
 	return 0;
 }

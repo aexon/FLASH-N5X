@@ -5,6 +5,7 @@
 
 #include "sched.h"
 
+#include <linux/interrupt.h>
 #include <linux/slab.h>
 #include <trace/events/sched.h>
 
@@ -60,7 +61,7 @@ static void start_rt_bandwidth(struct rt_bandwidth *rt_b)
 	raw_spin_unlock(&rt_b->rt_runtime_lock);
 }
 
-void init_rt_rq(struct rt_rq *rt_rq, struct rq *rq)
+void init_rt_rq(struct rt_rq *rt_rq)
 {
 	struct rt_prio_array *array;
 	int i;
@@ -185,7 +186,7 @@ int alloc_rt_sched_group(struct task_group *tg, struct task_group *parent)
 		if (!rt_se)
 			goto err_free_rq;
 
-		init_rt_rq(rt_rq, cpu_rq(i));
+		init_rt_rq(rt_rq);
 		rt_rq->rt_runtime = tg->rt_bandwidth.rt_runtime;
 		init_tg_rt_entry(tg, rt_rq, rt_se, i, parent->rt_se[i]);
 	}
@@ -1106,6 +1107,13 @@ dec_hmp_sched_stats_rt(struct rq *rq, struct task_struct *p)
 	dec_cumulative_runnable_avg(&rq->hmp_stats, p);
 }
 
+static void
+fixup_hmp_sched_stats_rt(struct rq *rq, struct task_struct *p,
+			 u32 new_task_load)
+{
+	fixup_cumulative_runnable_avg(&rq->hmp_stats, p, new_task_load);
+}
+
 #else	/* CONFIG_SCHED_HMP */
 
 static inline void
@@ -1286,6 +1294,23 @@ static void yield_task_rt(struct rq *rq)
 #ifdef CONFIG_SMP
 static int find_lowest_rq(struct task_struct *task);
 
+/*
+ * Return whether the task on the given cpu is currently non-preemptible
+ * while handling a potentially long softint, or if the task is likely
+ * to block preemptions soon because it is a ksoftirq thread that is
+ * handling slow softints.
+ */
+bool
+task_may_not_preempt(struct task_struct *task, int cpu)
+{
+	__u32 softirqs = per_cpu(active_softirqs, cpu) |
+			 __IRQ_STAT(cpu, __softirq_pending);
+	struct task_struct *cpu_ksoftirqd = per_cpu(ksoftirqd, cpu);
+	return ((softirqs & LONG_SOFTIRQ_MASK) &&
+		(task == cpu_ksoftirqd ||
+		 task_thread_info(task)->preempt_count & SOFTIRQ_MASK));
+}
+
 static int
 select_task_rq_rt_hmp(struct task_struct *p, int sd_flag, int flags)
 {
@@ -1308,6 +1333,7 @@ select_task_rq_rt(struct task_struct *p, int sd_flag, int flags)
 	struct task_struct *curr;
 	struct rq *rq;
 	int cpu;
+	bool may_not_preempt;
 
 	cpu = task_cpu(p);
 
@@ -1327,7 +1353,12 @@ select_task_rq_rt(struct task_struct *p, int sd_flag, int flags)
 	curr = ACCESS_ONCE(rq->curr); /* unlocked access */
 
 	/*
-	 * If the current task on @p's runqueue is an RT task, then
+	 * If the current task on @p's runqueue is a softirq task,
+	 * it may run without preemption for a time that is
+	 * ill-suited for a waiting RT task. Therefore, try to
+	 * wake this RT task on another runqueue.
+	 *
+	 * Also, if the current task on @p's runqueue is an RT task, then
 	 * try to see if we can wake this RT task up on another
 	 * runqueue. Otherwise simply start this RT task
 	 * on its current runqueue.
@@ -1348,17 +1379,21 @@ select_task_rq_rt(struct task_struct *p, int sd_flag, int flags)
 	 * This test is optimistic, if we get it wrong the load-balancer
 	 * will have to sort it out.
 	 */
-	if (curr && unlikely(rt_task(curr)) &&
-	    (curr->nr_cpus_allowed < 2 ||
-	     curr->prio <= p->prio)) {
+	may_not_preempt = task_may_not_preempt(curr, cpu);
+	if (curr && (may_not_preempt ||
+		     (unlikely(rt_task(curr)) &&
+		      (curr->nr_cpus_allowed < 2 ||
+		       curr->prio <= p->prio)))) {
 		int target = find_lowest_rq(p);
-
 		/*
-		 * Don't bother moving it if the destination CPU is
-		 * not running a lower priority task.
+		 * If cpu is non-preemptible, prefer remote cpu
+		 * even if it's running a higher-prio task.
+		 * Otherwise: Possible race. Don't bother moving it if the
+		 * destination CPU is not running a lower priority task.
 		 */
 		if (target != -1 &&
-		    p->prio < cpu_rq(target)->rt.highest_prio.curr)
+		    (may_not_preempt ||
+		     p->prio < cpu_rq(target)->rt.highest_prio.curr))
 			cpu = target;
 	}
 	rcu_read_unlock();
@@ -1439,15 +1474,7 @@ static struct task_struct *_pick_next_task_rt(struct rq *rq)
 {
 	struct sched_rt_entity *rt_se;
 	struct task_struct *p;
-	struct rt_rq *rt_rq;
-
-	rt_rq = &rq->rt;
-
-	if (!rt_rq->rt_nr_running)
-		return NULL;
-
-	if (rt_rq_throttled(rt_rq))
-		return NULL;
+	struct rt_rq *rt_rq  = &rq->rt;
 
 	do {
 		rt_se = pick_next_rt_entity(rq, rt_rq);
@@ -1460,19 +1487,32 @@ static struct task_struct *_pick_next_task_rt(struct rq *rq)
 	 * put_prev_task. A stale value can cause us to over-charge execution
 	 * time to real-time task, that could trigger throttling unnecessarily
 	 */
-	if (rq->skip_clock_update > 0) {
+	if (rq->skip_clock_update > 0)
 		rq->skip_clock_update = 0;
-		update_rq_clock(rq);
-	}
+
+	update_rq_clock(rq);
 	p = rt_task_of(rt_se);
 	p->se.exec_start = rq->clock_task;
 
 	return p;
 }
 
-static struct task_struct *pick_next_task_rt(struct rq *rq)
+static struct task_struct *
+pick_next_task_rt(struct rq *rq, struct task_struct *prev)
 {
-	struct task_struct *p = _pick_next_task_rt(rq);
+	struct task_struct *p;
+	struct rt_rq *rt_rq = &rq->rt;
+
+	if (!rt_rq->rt_nr_running)
+		return NULL;
+
+	if (rt_rq_throttled(rt_rq))
+		return NULL;
+
+	if (prev)
+		prev->sched_class->put_prev_task(rq, prev);
+
+	p = _pick_next_task_rt(rq);
 
 	/* The running task is never eligible for pushing */
 	if (p)
@@ -1564,11 +1604,12 @@ static int find_lowest_rq_hmp(struct task_struct *task)
 	 */
 	for_each_cpu(i, lowest_mask) {
 		struct rq *rq = cpu_rq(i);
-		cpu_cost = power_cost_at_freq(i, ACCESS_ONCE(rq->min_freq));
+		cpu_cost = power_cost_at_freq(i,
+				ACCESS_ONCE(rq->cluster->min_freq));
 		trace_sched_cpu_load(rq, idle_cpu(i), mostly_idle_cpu(i),
 				     sched_irqload(i), cpu_cost, cpu_temp(i));
 
-		if (sched_boost() && capacity(rq) != max_capacity)
+		if (sched_boost() && cpu_capacity(i) != max_capacity)
 			continue;
 
 		if (power_delta_exceeded(cpu_cost, min_cost)) {
@@ -2225,6 +2266,7 @@ const struct sched_class rt_sched_class = {
 #ifdef CONFIG_SCHED_HMP
 	.inc_hmp_sched_stats	= inc_hmp_sched_stats_rt,
 	.dec_hmp_sched_stats	= dec_hmp_sched_stats_rt,
+	.fixup_hmp_sched_stats	= fixup_hmp_sched_stats_rt,
 #endif
 };
 

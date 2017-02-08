@@ -24,10 +24,6 @@
 
 #include "smpboot.h"
 
-#ifdef CONFIG_MSM_HOTPLUG
-#include <linux/msm_hotplug.h>
-#endif
-
 #ifdef CONFIG_SMP
 /* Serializes the updates to cpu_online_mask, cpu_present_mask */
 static DEFINE_MUTEX(cpu_add_remove_lock);
@@ -337,7 +333,6 @@ static int __ref _cpu_down(unsigned int cpu, int tasks_frozen)
 	err = __stop_machine(take_cpu_down, &tcd_param, cpumask_of(cpu));
 	if (err) {
 		/* CPU didn't die: tell everyone.  Can't complain. */
-		smpboot_unpark_threads(cpu);
 		cpu_notify_nofail(CPU_DOWN_FAILED | mod, hcpu);
 		goto out_release;
 	}
@@ -389,6 +384,38 @@ out:
 EXPORT_SYMBOL(cpu_down);
 #endif /*CONFIG_HOTPLUG_CPU*/
 
+/*
+ * Unpark per-CPU smpboot kthreads at CPU-online time.
+ */
+static int smpboot_thread_call(struct notifier_block *nfb,
+			       unsigned long action, void *hcpu)
+{
+	int cpu = (long)hcpu;
+
+	switch (action & ~CPU_TASKS_FROZEN) {
+
+	case CPU_DOWN_FAILED:
+	case CPU_ONLINE:
+		smpboot_unpark_threads(cpu);
+		break;
+
+	default:
+		break;
+	}
+
+	return NOTIFY_OK;
+}
+
+static struct notifier_block smpboot_thread_notifier = {
+	.notifier_call = smpboot_thread_call,
+	.priority = CPU_PRI_SMPBOOT,
+};
+
+void __cpuinit smpboot_thread_init(void)
+{
+	register_cpu_notifier(&smpboot_thread_notifier);
+}
+
 /* Requires cpu_add_remove_lock to be held */
 static int _cpu_up(unsigned int cpu, int tasks_frozen)
 {
@@ -428,9 +455,6 @@ static int _cpu_up(unsigned int cpu, int tasks_frozen)
 		goto out_notify;
 	BUG_ON(!cpu_online(cpu));
 
-	/* Wake the per cpu threads */
-	smpboot_unpark_threads(cpu);
-
 	/* Now call notifier in preparation. */
 	cpu_notify(CPU_ONLINE | mod, hcpu);
 
@@ -451,13 +475,6 @@ int cpu_up(unsigned int cpu)
 #ifdef	CONFIG_MEMORY_HOTPLUG
 	int nid;
 	pg_data_t	*pgdat;
-#endif
-
-#ifdef CONFIG_MSM_HOTPLUG
-	if (msm_hotplug_scr_suspended && msm_enabled) {
-		if (cpu >= 4 && !msm_hotplug_fingerprint_called)
-			return 0;
-	}
 #endif
 
 	if (!cpu_possible(cpu)) {

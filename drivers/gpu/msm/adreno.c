@@ -765,6 +765,9 @@ static int adreno_of_get_pdata(struct platform_device *pdev)
 	pdata->bus_control = of_property_read_bool(pdev->dev.of_node,
 						"qcom,bus-control");
 
+	pdata->popp_enable = of_property_read_bool(pdev->dev.of_node,
+						"qcom,popp-enable");
+
 	if (adreno_of_read_property(pdev->dev.of_node, "qcom,clk-map",
 		&pdata->clk_map))
 		goto err;
@@ -1082,9 +1085,14 @@ static int adreno_init(struct kgsl_device *device)
 
 		adreno_dev->cmdbatch_profile_index = 0;
 
-		if (r == 0)
+		if (r == 0) {
 			set_bit(ADRENO_DEVICE_CMDBATCH_PROFILE,
 				&adreno_dev->priv);
+			kgsl_sharedmem_set(&adreno_dev->dev,
+				&adreno_dev->cmdbatch_profile_buffer, 0, 0,
+				PAGE_SIZE);
+		}
+
 	}
 
 	return ret;

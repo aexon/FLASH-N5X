@@ -2758,7 +2758,9 @@ HIFTargetSleepStateAdjust(A_target_id_t targid,
     struct HIF_CE_state *hif_state = (struct HIF_CE_state *)TARGID_TO_HIF(targid);
     A_target_id_t pci_addr = TARGID_TO_PCI_ADDR(targid);
     static int max_delay;
+#if 0
     static int debug = 0;
+#endif
     struct hif_pci_softc *sc = hif_state->sc;
 
 
@@ -2766,19 +2768,24 @@ HIFTargetSleepStateAdjust(A_target_id_t targid,
         return -EACCES;
 
     if (adf_os_atomic_read(&sc->pci_link_suspended)) {
+        pr_err("invalid access, PCIe link is suspended");
+#if 0
         VOS_TRACE(VOS_MODULE_ID_HIF, VOS_TRACE_LEVEL_ERROR,
                  "invalid access, PCIe link is suspended");
         debug = 1;
         VOS_ASSERT(0);
+#endif
         return -EACCES;
     }
 
+#if 0
     if(debug) {
         wait_for_it = TRUE;
         VOS_TRACE(VOS_MODULE_ID_HIF, VOS_TRACE_LEVEL_ERROR,
                  "doing debug for invalid access, PCIe link is suspended");
         VOS_ASSERT(0);
     }
+#endif
 
     if (sleep_ok) {
         adf_os_spin_lock_irqsave(&hif_state->keep_awake_lock);
@@ -2886,6 +2893,7 @@ HIFTargetSleepStateAdjust(A_target_id_t targid,
         }
     }
 
+#if 0
     if(debug && hif_state->verified_awake) {
         debug = 0;
         VOS_TRACE(VOS_MODULE_ID_HIF, VOS_TRACE_LEVEL_ERROR,
@@ -2903,6 +2911,7 @@ HIFTargetSleepStateAdjust(A_target_id_t targid,
                 A_PCI_READ32(sc->mem + CE_WRAPPER_BASE_ADDRESS +
                              CE_WRAPPER_INTERRUPT_SUMMARY_ADDRESS));
     }
+#endif
 
     return EOK;
 }
@@ -3627,4 +3636,30 @@ void hif_request_runtime_pm_resume(void *ol_sc)
 bool hif_is_80211_fw_wow_required(void)
 {
 	return false;
+}
+
+/* hif_addr_in_boundary() - API to check if addr is with in PCIE BAR range
+ * @hif_device:  context of cd
+ * @offset: offset from PCI BAR mapped base address.
+ *
+ * API determines if address to be accessed is with in range or out
+ * of bound.
+ *
+ * Return: success if address is with in PCI BAR range.
+ */
+int hif_addr_in_boundary(HIF_DEVICE *hif_device, A_UINT32 offset)
+{
+	struct HIF_CE_state *hif_state;
+	struct hif_pci_softc *sc;
+
+	hif_state = (struct HIF_CE_state *)hif_device;
+	sc = hif_state->sc;
+	if (unlikely(offset + sizeof(unsigned int) > sc->mem_len)) {
+		VOS_TRACE(VOS_MODULE_ID_HIF, VOS_TRACE_LEVEL_ERROR,
+			"refusing to read mmio out of bounds at 0x%08x - 0x%08zx (max 0x%08zx)\n",
+			offset, offset + sizeof(unsigned int), sc->mem_len);
+		return -EINVAL;
+	}
+
+	return 0;
 }

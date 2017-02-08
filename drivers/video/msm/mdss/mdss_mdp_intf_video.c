@@ -371,8 +371,10 @@ static int mdss_mdp_video_add_vsync_handler(struct mdss_mdp_ctl *ctl,
 		irq_en = true;
 	}
 	spin_unlock_irqrestore(&ctx->vsync_lock, flags);
-	if (irq_en)
+	if (irq_en) {
+		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
 		video_vsync_irq_enable(ctl, false);
+	}
 exit:
 	return ret;
 }
@@ -399,8 +401,10 @@ static int mdss_mdp_video_remove_vsync_handler(struct mdss_mdp_ctl *ctl,
 		irq_dis = true;
 	}
 	spin_unlock_irqrestore(&ctx->vsync_lock, flags);
-	if (irq_dis)
+	if (irq_dis) {
 		video_vsync_irq_disable(ctl);
+		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
+	}
 	return 0;
 }
 
@@ -934,9 +938,11 @@ static int mdss_mdp_video_config_fps(struct mdss_mdp_ctl *ctl,
 			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
 			spin_lock_irqsave(&ctx->dfps_lock, flags);
 
-			rc = mdss_mdp_video_dfps_check_line_cnt(ctl);
-			if (rc < 0)
-				goto exit_dfps;
+			if (mdata->mdp_rev < MDSS_MDP_HW_REV_105) {
+				rc = mdss_mdp_video_dfps_check_line_cnt(ctl);
+				if (rc < 0)
+					goto exit_dfps;
+			}
 
 			rc = mdss_mdp_video_fps_update(ctx, pdata, new_fps);
 			if (rc < 0) {

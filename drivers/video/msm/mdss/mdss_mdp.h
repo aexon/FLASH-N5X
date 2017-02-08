@@ -78,29 +78,6 @@
 
 #define XIN_HALT_TIMEOUT_US	0x4000
 
-struct kcal_lut_data {
-#if defined(CONFIG_MMI_PANEL_NOTIFICATIONS) && defined(CONFIG_FB)
-	struct mmi_notifier panel_nb;
-#elif defined(CONFIG_FB)
-	struct device dev;
-	struct notifier_block panel_nb;
-#endif
-	bool queue_changes;
-	int red;
-	int green;
-	int blue;
-	int minimum;
-	int enable;
-	int invert;
-	int sat;
-	int hue;
-	int val;
-	int cont;
-};
-
-void kcal_ext_apply_values(int red, int green, int blue);
-struct kcal_lut_data kcal_ext_show_values(void);
-
 enum mdss_mdp_perf_state_type {
 	PERF_SW_COMMIT_STATE = 0,
 	PERF_HW_MDP_STATE,
@@ -1045,8 +1022,9 @@ int mdss_mdp_pp_resume(struct mdss_mdp_ctl *ctl, u32 mixer_num);
 int mdss_mdp_pp_setup(struct mdss_mdp_ctl *ctl);
 int mdss_mdp_pp_setup_locked(struct mdss_mdp_ctl *ctl);
 int mdss_mdp_pipe_pp_setup(struct mdss_mdp_pipe *pipe, u32 *op);
+void mdss_mdp_pipe_pp_clear(struct mdss_mdp_pipe *pipe);
 int mdss_mdp_pipe_sspp_setup(struct mdss_mdp_pipe *pipe, u32 *op);
-void mdss_mdp_pipe_sspp_term(struct mdss_mdp_pipe *pipe);
+
 int mdss_mdp_smp_setup(struct mdss_data_type *mdata, u32 cnt, u32 size);
 
 void mdss_hw_init(struct mdss_data_type *mdata);

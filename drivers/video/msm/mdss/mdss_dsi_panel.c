@@ -38,6 +38,8 @@ static int onboot = true;
 
 DEFINE_LED_TRIGGER(bl_led_trigger);
 
+extern void lazyplug_enter_lazy(bool enter);
+
 static int mdss_bl_ctrl_panel = false;
 static int bl_default_lvl = 1800;
 
@@ -685,6 +687,7 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 	}
 
 	display_on = true;
+	lazyplug_enter_lazy(false);
 
 #ifdef CONFIG_POWERSUSPEND
 	set_power_suspend_state_panel_hook(POWER_SUSPEND_INACTIVE);
@@ -756,6 +759,7 @@ static int mdss_dsi_panel_off(struct mdss_panel_data *pdata)
 		mdss_dsi_panel_cmds_send(ctrl, &ctrl->off_cmds);
 
 	display_on = false;
+	lazyplug_enter_lazy(true);
 
 #ifdef CONFIG_POWERSUSPEND
 	set_power_suspend_state_panel_hook(POWER_SUSPEND_ACTIVE);
@@ -1884,6 +1888,9 @@ static int mdss_panel_parse_dt(struct device_node *np,
 					"qcom,mdss-dsi-lp11-init");
 	rc = of_property_read_u32(np, "qcom,mdss-dsi-init-delay-us", &tmp);
 	pinfo->mipi.init_delay = (!rc ? tmp : 0);
+
+	rc = of_property_read_u32(np, "qcom,mdss-dsi-post-init-delay", &tmp);
+	pinfo->mipi.post_init_delay = (!rc ? tmp : 0);
 
 	mdss_dsi_parse_roi_alignment(np, pinfo);
 

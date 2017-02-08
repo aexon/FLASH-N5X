@@ -577,6 +577,11 @@ static int mdss_mdp_rotator_queue_sub(struct mdss_mdp_rotator_session *rot,
 
 	pipe = rot_pipe->pipe;
 
+	if (!pipe->mixer_left) {
+		pr_debug("Mixer left is null\n");
+		return -EINVAL;
+	}
+
 	orig_ctl = pipe->mixer_left->ctl;
 	if (orig_ctl->shared_lock)
 		mutex_lock(orig_ctl->shared_lock);
@@ -607,6 +612,10 @@ static int mdss_mdp_rotator_queue_sub(struct mdss_mdp_rotator_session *rot,
 	ATRACE_BEGIN("rotator_kickoff");
 	ret = mdss_mdp_rotator_kickoff(rot_ctl, rot, dst_data);
 	ATRACE_END("rotator_kickoff");
+	if (ret) {
+		pr_err("mdss_mdp_rotator_kickoff error : %d\n", ret);
+		goto error;
+	}
 
 	return ret;
 error:

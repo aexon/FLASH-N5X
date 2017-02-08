@@ -124,8 +124,8 @@ static void init_watchdog_work(struct work_struct *work);
 static void dump_cpu_alive_mask(struct msm_watchdog_data *wdog_dd)
 {
 	static char alive_mask_buf[MASK_SIZE];
-	cpulist_scnprintf(alive_mask_buf, MASK_SIZE,
-						&wdog_dd->alive_mask);
+	scnprintf(alive_mask_buf, MASK_SIZE, "%*pbl",
+					cpumask_pr_args(&wdog_dd->alive_mask));
 	printk(KERN_INFO "cpu alive mask from last pet %s\n", alive_mask_buf);
 }
 
@@ -407,7 +407,7 @@ void msm_trigger_wdog_bite(void)
 	__raw_writel(1, wdog_data->base + WDT0_RST);
 	mb();
 	/* Delay to make sure bite occurs */
-	mdelay(1);
+	mdelay(10000);
 	pr_err("Wdog - STS: 0x%x, CTL: 0x%x, BARK TIME: 0x%x, BITE TIME: 0x%x",
 		__raw_readl(wdog_data->base + WDT0_STS),
 		__raw_readl(wdog_data->base + WDT0_EN),

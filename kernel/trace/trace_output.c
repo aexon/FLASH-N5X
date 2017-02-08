@@ -146,7 +146,7 @@ trace_seq_bitmask(struct trace_seq *s, const unsigned long *maskp,
 	if (s->full || !len)
 		return 0;
 
-	ret = bitmap_scnprintf(s->buffer, len, maskp, nmaskbits);
+	ret = scnprintf(s->buffer, len, " %*pbl", nmaskbits, maskp);
 	s->len += ret;
 
 	return 1;
@@ -1200,7 +1200,7 @@ static enum print_line_t trace_graph_ret_raw(struct trace_iterator *iter, int fl
 			      field->ret.calltime,
 			      field->ret.rettime,
 			      field->ret.overrun,
-			      field->ret.depth));
+			      field->ret.depth))
 		return TRACE_TYPE_PARTIAL_LINE;
 
 	return TRACE_TYPE_HANDLED;

@@ -1,7 +1,7 @@
 VERSION = 3
 PATCHLEVEL = 10
-SUBLEVEL = 104
-EXTRAVERSION = -FLASH-N5X-2.3
+SUBLEVEL = 105
+EXTRAVERSION = -FLASH-N5X-2.4
 NAME = TOSSUG Baby Fish
 
 # *DOCUMENTATION*
@@ -194,7 +194,7 @@ SUBARCH := $(shell uname -m | sed -e s/i.86/x86/ -e s/x86_64/x86/ \
 # Default value for CROSS_COMPILE is not to prefix executables
 # Note: Some architectures assign CROSS_COMPILE in their arch/*/Makefile
 ARCH		?= $(SUBARCH)
-CROSS_COMPILE	?= $(CCACHE) $(CONFIG_CROSS_COMPILE:"%"=%)
+CROSS_COMPILE	?= $(CONFIG_CROSS_COMPILE:"%"=%)
 
 # Architecture as present in compile.h
 UTS_MACHINE 	:= $(ARCH)
@@ -328,8 +328,8 @@ include $(srctree)/scripts/Kbuild.include
 AS		= $(CROSS_COMPILE)as
 LD		= $(CROSS_COMPILE)ld
 LD		+= -O3 --strip-debug
-CC		= $(CROSS_COMPILE)gcc
-CC		+= -O3 -mcpu=cortex-a57.cortex-a53 -mtune=cortex-a57.cortex-a53
+CC		= $(CCACHE) $(CROSS_COMPILE)gcc
+CC		+= -O3 -mcpu=cortex-a57.cortex-a53+crypto
 CC		+= -fmodulo-sched -fmodulo-sched-allow-regmoves
 CC		+= -fgraphite-identity -floop-block -floop-interchange -floop-strip-mine
 CC		+= -ftree-loop-linear -ftree-loop-distribution
@@ -383,12 +383,7 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -std=gnu89
 
 # Thanks gcc!
-KBUILD_CFLAGS   += -Wno-trigraphs -Wno-unused-label -Wno-array-bounds -Wno-memset-transposed-args \
-                   -Wno-unused-function -Wno-declaration-after-statement \
-                   -Wno-unused-variable -Wno-parentheses -Wno-maybe-uninitialized \
-                   -Wno-misleading-indentation -Wno-bool-compare -Wno-int-conversion \
-                   -Wno-discarded-qualifiers -Wno-tautological-compare -Wno-incompatible-pointer-types \
-                   -Wno-error=maybe-uninitialized
+KBUILD_CFLAGS   += -Wno-unused-const-variable
 
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=

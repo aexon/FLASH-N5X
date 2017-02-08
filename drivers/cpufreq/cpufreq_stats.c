@@ -17,7 +17,7 @@
 #include <linux/err.h>
 #include <linux/of.h>
 #include <linux/sched.h>
-#include <asm/cputime.h>
+#include <linux/cputime.h>
 
 static spinlock_t cpufreq_stats_lock;
 
@@ -574,7 +574,9 @@ static void cpufreq_allstats_create(unsigned int cpu,
 static int cpufreq_stat_notifier_policy(struct notifier_block *nb,
 		unsigned long val, void *data)
 {
-	int ret, count = 0, i;
+	int ret = 0;
+	int count = 0;
+	int i = 0;
 	struct cpufreq_policy *policy = data;
 	struct cpufreq_frequency_table *table;
 	unsigned int cpu_num, cpu = policy->cpu;

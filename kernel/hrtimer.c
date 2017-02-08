@@ -168,19 +168,6 @@ struct hrtimer_clock_base *lock_hrtimer_base(const struct hrtimer *timer,
 	}
 }
 
-
-/*
- * Get the preferred target CPU for NOHZ
- */
-static int hrtimer_get_target(int this_cpu, int pinned)
-{
-#ifdef CONFIG_NO_HZ_COMMON
-	if (!pinned && get_sysctl_timer_migration())
-		return get_nohz_timer_target();
-#endif
-	return this_cpu;
-}
-
 /*
  * With HIGHRES=y we do not migrate the timer when it is expiring
  * before the next event on the target cpu because we cannot reprogram
@@ -214,7 +201,7 @@ switch_hrtimer_base(struct hrtimer *timer, struct hrtimer_clock_base *base,
 	struct hrtimer_clock_base *new_base;
 	struct hrtimer_cpu_base *new_cpu_base;
 	int this_cpu = smp_processor_id();
-	int cpu = hrtimer_get_target(this_cpu, pinned);
+	int cpu = get_nohz_timer_target(pinned);
 	int basenum = base->index;
 
 again:
@@ -239,10 +226,13 @@ again:
 		raw_spin_unlock(&base->cpu_base->lock);
 		raw_spin_lock(&new_base->cpu_base->lock);
 
-		if (cpu != this_cpu && hrtimer_check_target(timer, new_base)) {
-			cpu = this_cpu;
+		this_cpu = smp_processor_id();
+
+		if (cpu != this_cpu && (hrtimer_check_target(timer, new_base)
+			|| !cpu_online(cpu))) {
 			raw_spin_unlock(&new_base->cpu_base->lock);
 			raw_spin_lock(&base->cpu_base->lock);
+			cpu = smp_processor_id();
 			timer->base = base;
 			goto again;
 		}

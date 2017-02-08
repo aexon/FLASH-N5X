@@ -92,6 +92,9 @@
 #define SLIMBUS_QMI_SVC_V1 1
 #define SLIMBUS_QMI_INS_ID 0
 
+/* QMI response timeout of 500ms */
+#define SLIM_QMI_RESP_TOUT 500
+
 #define PGD_THIS_EE(r, v) ((v) ? PGD_THIS_EE_V2(r) : PGD_THIS_EE_V1(r))
 #define PGD_PORT(r, p, v) ((v) ? PGD_PORT_V2(r, p) : PGD_PORT_V1(r, p))
 #define CFG_PORT(r, v) ((v) ? CFG_PORT_V2(r) : CFG_PORT_V1(r))
@@ -394,6 +397,10 @@ int msm_slim_connect_endp(struct msm_slim_ctrl *dev,
 void msm_slim_disconnect_endp(struct msm_slim_ctrl *dev,
 					struct msm_slim_endp *endpoint,
 					enum msm_slim_msgq *msgq_flag);
+void msm_slim_deinit_ep(struct msm_slim_ctrl *dev,
+				struct msm_slim_endp *endpoint,
+				enum msm_slim_msgq *msgq_flag);
+
 void msm_slim_qmi_exit(struct msm_slim_ctrl *dev);
 int msm_slim_qmi_init(struct msm_slim_ctrl *dev, bool apps_is_master);
 int msm_slim_qmi_power_request(struct msm_slim_ctrl *dev, bool active);

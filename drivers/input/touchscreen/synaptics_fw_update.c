@@ -1327,6 +1327,7 @@ write_config:
 	return retval;
 }
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
 static int fwu_start_write_config(void)
 {
 	int retval;
@@ -1379,6 +1380,7 @@ static int fwu_start_write_config(void)
 
 	return retval;
 }
+#endif
 
 static int fwu_do_write_lockdown(bool reset)
 {
@@ -1426,6 +1428,7 @@ exit:
 	return retval;
 }
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
 static int fwu_start_write_lockdown(void)
 {
 	if (parse_header())
@@ -1529,6 +1532,7 @@ static int fwu_do_read_config(void)
 exit:
 	return retval;
 }
+#endif
 
 static int fwu_do_reflash(void)
 {
@@ -1763,6 +1767,7 @@ int synaptics_fw_updater(void)
 }
 EXPORT_SYMBOL(synaptics_fw_updater);
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
 static ssize_t fwu_sysfs_show_image(struct file *data_file,
 		struct kobject *kobj, struct bin_attribute *attributes,
 		char *buf, loff_t pos, size_t count)
@@ -2017,6 +2022,7 @@ lockdown_store_exit:
 	mutex_unlock(&fwu_sysfs_mutex);
 	return retval;
 }
+#endif
 
 static ssize_t fwu_sysfs_check_fw_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
@@ -2040,6 +2046,7 @@ static ssize_t fwu_sysfs_check_fw_store(struct device *dev,
 	return count;
 }
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
 static ssize_t fwu_sysfs_write_config_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
@@ -2261,6 +2268,7 @@ static ssize_t fwu_sysfs_package_id_show(struct device *dev,
 		(pkg_id[1] << 8) | pkg_id[0],
 		(pkg_id[3] << 8) | pkg_id[2]);
 }
+#endif
 
 static int synaptics_rmi4_debug_dump_info(struct seq_file *m, void *v)
 {
@@ -2294,6 +2302,7 @@ static void synaptics_rmi4_fwu_attn(struct synaptics_rmi4_data *rmi4_data,
 	return;
 }
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
 static struct bin_attribute dev_attr_data = {
 	.attr = {
 		.name = "data",
@@ -2303,8 +2312,10 @@ static struct bin_attribute dev_attr_data = {
 	.read = fwu_sysfs_show_image,
 	.write = fwu_sysfs_store_image,
 };
+#endif
 
 static struct device_attribute attrs[] = {
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
 	__ATTR(fw_name, S_IRUGO | S_IWUSR | S_IWGRP,
 			fwu_sysfs_image_name_show,
 			fwu_sysfs_image_name_store),
@@ -2314,9 +2325,11 @@ static struct device_attribute attrs[] = {
 	__ATTR(update_fw, S_IWUSR | S_IWGRP,
 			NULL,
 			fwu_sysfs_do_reflash_store),
+#endif
 	__ATTR(check_fw, S_IWUSR | S_IWGRP,
 			NULL,
 			fwu_sysfs_check_fw_store),
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
 	__ATTR(writeconfig, S_IWUSR | S_IWGRP,
 			NULL,
 			fwu_sysfs_write_config_store),
@@ -2356,6 +2369,7 @@ static struct device_attribute attrs[] = {
 	__ATTR(package_id, S_IRUGO,
 			fwu_sysfs_package_id_show,
 			synaptics_rmi4_store_error),
+#endif
 };
 
 
@@ -2466,6 +2480,7 @@ static int synaptics_rmi4_fwu_init(struct synaptics_rmi4_data *rmi4_data)
 	INIT_DELAYED_WORK(&fwu->fwu_work, synaptics_rmi4_fwu_work);
 #endif
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
 	retval = sysfs_create_bin_file(&rmi4_data->i2c_client->dev.kobj,
 			&dev_attr_data);
 	if (retval < 0) {
@@ -2474,6 +2489,7 @@ static int synaptics_rmi4_fwu_init(struct synaptics_rmi4_data *rmi4_data)
 				__func__);
 		goto exit_free_mem;
 	}
+#endif
 
 	for (attr_count = 0; attr_count < ARRAY_SIZE(attrs); attr_count++) {
 		retval = sysfs_create_file(&rmi4_data->i2c_client->dev.kobj,
@@ -2507,7 +2523,9 @@ exit_remove_attrs:
 				&attrs[attr_count].attr);
 	}
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
 	sysfs_remove_bin_file(&rmi4_data->input_dev->dev.kobj, &dev_attr_data);
+#endif
 
 exit_free_mem:
 	kfree(fwu->fn_ptr);
@@ -2524,7 +2542,9 @@ static void synaptics_rmi4_fwu_remove(struct synaptics_rmi4_data *rmi4_data)
 {
 	unsigned char attr_count;
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
 	sysfs_remove_bin_file(&rmi4_data->input_dev->dev.kobj, &dev_attr_data);
+#endif
 
 	for (attr_count = 0; attr_count < ARRAY_SIZE(attrs); attr_count++) {
 		sysfs_remove_file(&rmi4_data->input_dev->dev.kobj,

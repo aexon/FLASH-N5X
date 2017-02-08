@@ -18,7 +18,7 @@
 
 /* Chill version macros */
 #define CHILL_VERSION_MAJOR			(2)
-#define CHILL_VERSION_MINOR			(7)
+#define CHILL_VERSION_MINOR			(9)
 
 /* Chill governor macros */
 #define DEF_FREQUENCY_UP_THRESHOLD		(85)
@@ -85,7 +85,7 @@ static void cs_check_cpu(int cpu, unsigned int load)
 			return;
 
 		/* reduce boost count with frequency */
-		if (boost_counter < 0)
+		if (boost_counter > 0)
 			boost_counter--;
 
 		freq_target = get_freq_target(cs_tuners, policy);
@@ -148,7 +148,7 @@ static void cs_check_cpu(int cpu, unsigned int load)
 static void cs_dbs_timer(struct work_struct *work)
 {
 	struct cs_cpu_dbs_info_s *dbs_info = container_of(work,
-			struct cs_cpu_dbs_info_s, cdbs.work.work);
+			struct cs_cpu_dbs_info_s, cdbs.dwork.work);
 	unsigned int cpu = dbs_info->cdbs.cur_policy->cpu;
 	struct cs_cpu_dbs_info_s *core_dbs_info = &per_cpu(cs_cpu_dbs_info,
 			cpu);
@@ -255,7 +255,7 @@ static ssize_t store_down_threshold_suspended(struct dbs_data *dbs_data, const c
 			input >= cs_tuners->up_threshold)
 		return -EINVAL;
 
-	cs_tuners->down_threshold = input;
+	cs_tuners->down_threshold_suspended = input;
 	return count;
 }
 

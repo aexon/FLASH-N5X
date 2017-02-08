@@ -168,16 +168,16 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
 	int g;
 	struct fdtable *fdt = NULL;
 	const struct cred *cred;
-	pid_t ppid, tpid;
+	pid_t ppid = 0, tpid = 0;
+	struct task_struct *leader = NULL;
 
 	rcu_read_lock();
-	ppid = pid_alive(p) ?
-		task_tgid_nr_ns(rcu_dereference(p->real_parent), ns) : 0;
-	tpid = 0;
 	if (pid_alive(p)) {
 		struct task_struct *tracer = ptrace_parent(p);
 		if (tracer)
 			tpid = task_pid_nr_ns(tracer, ns);
+		ppid = task_tgid_nr_ns(rcu_dereference(p->real_parent), ns);
+		leader = p->group_leader;
 	}
 	cred = get_task_cred(p);
 	seq_printf(m,
@@ -189,7 +189,7 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
 		"Uid:\t%d\t%d\t%d\t%d\n"
 		"Gid:\t%d\t%d\t%d\t%d\n",
 		get_task_state(p),
-		task_tgid_nr_ns(p, ns),
+		leader ? task_pid_nr_ns(leader, ns) : 0,
 		pid_nr_ns(pid, ns),
 		ppid, tpid,
 		from_kuid_munged(user_ns, cred->uid),
@@ -346,12 +346,10 @@ static inline void task_context_switch_counts(struct seq_file *m,
 
 static void task_cpus_allowed(struct seq_file *m, struct task_struct *task)
 {
-	seq_puts(m, "Cpus_allowed:\t");
-	seq_cpumask(m, &task->cpus_allowed);
-	seq_putc(m, '\n');
-	seq_puts(m, "Cpus_allowed_list:\t");
-	seq_cpumask_list(m, &task->cpus_allowed);
-	seq_putc(m, '\n');
+	seq_printf(m, "Cpus_allowed:\t%*pb\n",
+		   cpumask_pr_args(&task->cpus_allowed));
+	seq_printf(m, "Cpus_allowed_list:\t%*pbl\n",
+		   cpumask_pr_args(&task->cpus_allowed));
 }
 
 int proc_pid_status(struct seq_file *m, struct pid_namespace *ns,

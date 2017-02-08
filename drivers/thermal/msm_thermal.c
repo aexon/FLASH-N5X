@@ -424,7 +424,8 @@ static void cpus_previously_online_update(void)
 	cpumask_or(cpus_previously_online, cpus_previously_online,
 		   cpu_online_mask);
 	put_online_cpus();
-	cpulist_scnprintf(buf, sizeof(buf), cpus_previously_online);
+	scnprintf(buf, sizeof(buf), "%*pbl",
+			cpumask_pr_args(cpus_previously_online));
 	pr_debug("%s\n", buf);
 }
 
@@ -1175,8 +1176,9 @@ static int __ref init_cluster_freq_table(void)
 				if (!cpu_set) {
 					cpumask_clear_cpu(_cpu,
 						cpus_previously_online);
-					cpumask_scnprintf(buf, sizeof(buf),
-						cpus_previously_online);
+					scnprintf(buf, sizeof(buf), "%*pb",
+						cpumask_pr_args(
+						cpus_previously_online));
 					pr_debug("Reset prev online to %s\n",
 						 buf);
 				}
@@ -2569,12 +2571,6 @@ static __ref int do_hotplug(void *data)
 	return ret;
 }
 
-#ifdef CONFIG_MSM_HOTPLUG
-int msm_thermal_deny_cpu_up(uint32_t cpu) {
-    return cpus_offlined & BIT(cpu);
-}
-#endif
-
 #else
 static void __ref do_core_control(long temp)
 {
@@ -3278,6 +3274,13 @@ static void freq_mitigation_init(void)
 		goto init_freq_thread;
 
 	for_each_possible_cpu(cpu) {
+		/*
+		 * Hotplug may not be enabled,
+		 * make sure core sensor id is initialized.
+		 */
+		cpus[cpu].sensor_id =
+			sensor_get_id((char *)cpus[cpu].sensor_type);
+		cpus[cpu].id_type = THERM_ZONE_ID;
 		if (!(msm_thermal_info.freq_mitig_control_mask & BIT(cpu)))
 			continue;
 		hi_thresh = &cpus[cpu].threshold[FREQ_THRESHOLD_HIGH];
@@ -4456,9 +4459,6 @@ int msm_thermal_pre_init(struct device *dev)
 		goto pre_init_exit;
 	}
 
-	if (!tsens_temp_at_panic)
-		msm_thermal_panic_notifier_init(dev);
-
 	if (!thresh) {
 		thresh = kzalloc(
 				sizeof(struct threshold_info) * MSM_LIST_MAX_NR,
@@ -4594,6 +4594,7 @@ int msm_thermal_init(struct msm_thermal_data *pdata)
 		cpus_previously_online_update();
 		register_cpu_notifier(&msm_thermal_cpu_notifier);
 	}
+	msm_thermal_panic_notifier_init(&pdata->pdev->dev);
 
 	return ret;
 }
